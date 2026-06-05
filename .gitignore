@@ -1,0 +1,23 @@
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Local Data Storage (Crucial for large Kaggle files)
+data/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Virtual Environments
+.venv/
+venv/
+env/
+
+# MLflow local runs (We keep repository clean, check dashboards locally)
+mlruns/
+mlflow/
+
+# IDE files
+.vscode/
+.idea/
+.DS_Store
