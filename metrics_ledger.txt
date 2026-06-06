@@ -4,3 +4,5 @@ Run: lgb_xgb_ensemble_blend | LGB: 0.4535 | XGB: 0.4295 | Ensemble Blend: 0.4388
 Run: lgb_xgb_ensemble_blend | LGB: 0.4350 | XGB: 0.4241 | Ensemble Blend: 0.4274
 Run: shortcut_plus_promo_lags | LGB: 0.4207 | XGB: 0.4217 | Ensemble Blend: 0.4190
 Run: type_product_family_mean | LGB: 0.4194 | XGB: 0.4208 | Ensemble Blend: 0.4176
+Run: cyclical_trig_time_signals | LGB: 0.4216 | XGB: 0.4133 | Ensemble Blend: 0.4149
+Run: holiday_cluster_adjustments | LGB: 0.4263 | XGB: 0.4124 | Ensemble Blend: 0.4161

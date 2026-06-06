@@ -142,3 +142,31 @@ def prepare_test_inference_data(train_df: pd.DataFrame) -> pd.DataFrame:
     unified_inference_df = pd.concat([train_tail, test], axis=0, ignore_index=True)
 
     return unified_inference_df, len(test)
+
+
+def merge_holiday_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Merges national holiday metadata and marks true calendar events."""
+    print("⏳ Ingesting and processing holiday events...")
+    holidays = pd.read_csv(config.HOLIDAYS_PATH, parse_dates=["date"])
+
+    # Filter for true National holidays to keep the signal clean
+    # Ignore local city holidays since they don't impact all stores globally
+    national_holidays = holidays[holidays["locale"] == "National"].copy()
+
+    # Drop rows marked as "Transferred" because the actual holiday day moved
+    national_holidays = national_holidays[national_holidays["transferred"] == False]
+
+    # Create a simple binary indicator flag: Is this a national holiday?
+    national_holidays["is_national_holiday"] = 1
+
+    # Remove duplicate dates if multiple holiday descriptions land on the same day
+    national_holidays = national_holidays.drop_duplicates(subset=["date"])
+
+    # Merge this flag back into our unified main dataframe
+    df = pd.merge(
+        df, national_holidays[["date", "is_national_holiday"]], on="date", how="left"
+    )
+    df["is_national_holiday"] = df["is_national_holiday"].fillna(0).astype(np.int8)
+
+    print("✓ National holiday signals integrated cleanly.")
+    return df
