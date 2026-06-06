@@ -115,3 +115,30 @@ def merge_oil_data(df: pd.DataFrame) -> pd.DataFrame:
 
     print("✓ Oil price feature integrated cleanly.")
     return df
+
+
+def prepare_test_inference_data(train_df: pd.DataFrame) -> pd.DataFrame:
+    """Loads raw test data and links historical training tails to calculate lags cleanly."""
+    print("⏳ Loading raw test dataset...")
+    test = pd.read_csv(config.TEST_PATH, parse_dates=["date"])
+
+    print("⏳ Loading store metadata for test set...")
+    stores = pd.read_csv(config.STORES_PATH)
+    test = pd.merge(test, stores, on="store_nbr", how="left")
+
+    print("🔗 Stitching historical training tail to test grid for lag computations...")
+    tail_cutoff = train_df["date"].max() - pd.Timedelta(days=30)
+    train_tail = train_df[train_df["date"] >= tail_cutoff].copy()
+
+    # --- FIX: Drop existing calculated macro features from tail to prevent merge collisions ---
+    cols_to_drop = ["oil_roll_mean_7", "oil_daily_diff"]
+    # Only drop them if they exist in the dataframe to prevent errors
+    train_tail = train_tail.drop(
+        columns=[c for c in cols_to_drop if c in train_tail.columns]
+    )
+    # -----------------------------------------------------------------------------------------
+
+    # Combine historical tail and test set together
+    unified_inference_df = pd.concat([train_tail, test], axis=0, ignore_index=True)
+
+    return unified_inference_df, len(test)

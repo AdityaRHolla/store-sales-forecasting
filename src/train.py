@@ -111,3 +111,53 @@ def run_ensemble_training(df: pd.DataFrame, experiment_name: str = "ensemble_run
     print(f"✓ Ensemble scores saved securely to ledger: {ledger_path}")
 
     return lgb_model, xgb_model, features
+
+
+def generate_kaggle_submission(
+    df: pd.DataFrame, test_row_count: int, xgb_model, features
+):
+    """Generates a submission file aligned with Kaggle's row order guidelines."""
+    print("🔮 Running inference on future test grid...")
+
+    # Isolate rows that belong strictly to the future test timeline
+    # The true test data starts exactly on August 16, 2017
+    test_mask = df["date"] >= pd.to_datetime("2017-08-16")
+    test_df = df[test_mask].copy()
+
+    # Remove any injected holiday placeholder rows (IDs that we set to -1)
+    test_df = test_df[test_df["id"] != -1].copy()
+
+    # Ensure categories match our training setup
+    cat_cols = ["family", "city", "state", "type", "cluster"]
+    for col in cat_cols:
+        test_df[col] = test_df[col].astype("category")
+
+    X_test = test_df[features]
+
+    # Predict and transform out of log space
+    preds_log = xgb_model.predict(X_test)
+    final_preds = np.expm1(preds_log)
+    final_preds = np.clip(final_preds, 0, None)
+
+    # Attach predictions back onto our sliced dataframe
+    test_df["sales"] = final_preds
+
+    print("📋 Re-aligning predictions with raw Kaggle test format...")
+    # Load the original raw test file to use as our layout template
+    raw_test = pd.read_csv(config.TEST_PATH)
+
+    # Merge our predictions onto the raw template using the unique ID column
+    submission = pd.merge(
+        raw_test[["id"]], test_df[["id", "sales"]], on="id", how="left"
+    )
+
+    # Safety Check: Fill any missing rows with 0 if an ID skipped calculation
+    submission["sales"] = submission["sales"].fillna(0.0)
+
+    # Verify formatting bounds before exporting
+    print(f"📊 Submission Row Count: {len(submission)}")
+    print(f"📊 Expected Row Count: {len(raw_test)}")
+
+    sub_path = os.path.join(config.BASE_DIR, "data", "processed", "submission.csv")
+    submission.to_csv(sub_path, index=False)
+    print(f"🎉 Pristine submission file saved successfully to: {sub_path}")
