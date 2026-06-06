@@ -1,15 +1,15 @@
 import lightgbm as lgb
+import mlflow
 import numpy as np
 import pandas as pd
 from sklearn.metrics import root_mean_squared_error
 from src import config
 
 
-def run_baseline_training(df: pd.DataFrame):
-    """Splits data chronologically, prepares features, and trains a baseline LightGBM model."""
+def run_baseline_training(df: pd.DataFrame, experiment_name: str = "lgb_baseline"):
+    """Splits data, trains LightGBM, and saves all metrics automatically to MLflow."""
     print("✂️ Splitting data into Train and Validation sets...")
 
-    # Define categorical and numerical features for the baseline
     cat_cols = ["family", "city", "state", "type", "cluster"]
     num_cols = [
         "onpromotion",
@@ -24,17 +24,17 @@ def run_baseline_training(df: pd.DataFrame):
         "is_payday",
         "is_nye",
         "is_nyd",
+        "sales_lag_1",
+        "sales_lag_7",
+        "sales_lag_14",
+        "sales_roll_mean_7",
     ]
-
     features = cat_cols + num_cols
 
-    # Convert string columns to categorical type so LightGBM knows how to handle them
     for col in cat_cols:
         df[col] = df[col].astype("category")
 
-    # Chronological Cutoff (Keep final 16 days of train data for validation)
     val_cutoff = pd.to_datetime("2017-07-26")
-
     train_mask = df["date"] < val_cutoff
     val_mask = df["date"] >= val_cutoff
 
@@ -47,34 +47,35 @@ def run_baseline_training(df: pd.DataFrame):
         df.loc[val_mask, config.TARGET_COL],
     )
 
-    # Kaggle competition metrics use RMSLE (Root Mean Squared Logarithmic Error)
-    # The simplest way to optimize for RMSLE is to train directly on log1p(y)
     y_train_log = np.log1p(y_train)
     y_val_log = np.log1p(y_val)
 
-    print(f"📊 Train records: {len(X_train)} | Validation records: {len(X_val)}")
-    print("🚀 Training baseline LightGBM model...")
+    # --- NEW: Initialize MLflow Experiment Dashboard ---
+    mlflow.set_experiment("Favorita_Store_Sales")
 
-    # Initialize a fast baseline model
-    model = lgb.LGBMRegressor(
-        n_estimators=100, learning_rate=0.1, random_state=42, n_jobs=-1
-    )
+    with mlflow.start_run(run_name=experiment_name):
+        print(f"📊 Tracking execution under run: '{experiment_name}'")
+        print("🚀 Training LightGBM model...")
 
-    model.fit(
-        X_train,
-        y_train_log,
-        eval_set=[(X_val, y_val_log)],
-        callbacks=[lgb.early_stopping(stopping_rounds=10, verbose=False)],
-    )
+        model = lgb.LGBMRegressor(
+            n_estimators=100, learning_rate=0.1, random_state=42, n_jobs=-1
+        )
 
-    # Predict and transform predictions back from log space
-    preds_log = model.predict(X_val)
-    preds = np.expm1(preds_log)
-    preds = np.clip(preds, 0, None)  # Sales cannot be negative
+        model.fit(
+            X_train,
+            y_train_log,
+            eval_set=[(X_val, y_val_log)],
+            callbacks=[lgb.early_stopping(stopping_rounds=10, verbose=False)],
+        )
 
-    # Calculate final baseline metric
-    # Using modern scikit-learn root_mean_squared_error on log values equals RMSLE
-    rmsle = root_mean_squared_error(y_val_log, preds_log)
-    print(f"\n🎉 Baseline Validation RMSLE Score: {rmsle:.4f}")
+        preds_log = model.predict(X_val)
+        rmsle = root_mean_squared_error(y_val_log, preds_log)
+
+        # Log parameters and metrics explicitly into our dashboard backend
+        mlflow.log_param("num_features", len(features))
+        mlflow.log_param("model_type", "LightGBM")
+        mlflow.log_metric("val_rmsle", rmsle)
+
+        print(f"\n🎉 Validation RMSLE Score: {rmsle:.4f}")
 
     return model, features
