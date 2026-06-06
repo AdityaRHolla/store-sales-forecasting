@@ -6,3 +6,6 @@ Run: shortcut_plus_promo_lags | LGB: 0.4207 | XGB: 0.4217 | Ensemble Blend: 0.41
 Run: type_product_family_mean | LGB: 0.4194 | XGB: 0.4208 | Ensemble Blend: 0.4176
 Run: cyclical_trig_time_signals | LGB: 0.4216 | XGB: 0.4133 | Ensemble Blend: 0.4149
 Run: holiday_cluster_adjustments | LGB: 0.4263 | XGB: 0.4124 | Ensemble Blend: 0.4161
+Run: holiday_proximity_and_promo_ratio | LGB: 0.4242 | XGB: 0.4127 | Ensemble Blend: 0.4147
+Run: fixed_holiday_maps_and_categorical_clusters | LGB: 0.4253 | XGB: 0.4131 | Ensemble Blend: 0.4158
+Run: isolated_per_family_loop | Per-Family Loop | Validation RMSLE: 0.4024
