@@ -14,7 +14,7 @@ def run_ensemble_training(df: pd.DataFrame, experiment_name: str = "ensemble_run
     """
     print("✂️ Splitting data into Train and Validation sets...")
 
-    cat_cols = ["family", "city", "state", "type", "cluster"]
+    cat_cols = ["family", "city", "state", "type", "cluster", "store_family"]
     num_cols = [
         "onpromotion",
         "oil_price",
@@ -35,6 +35,9 @@ def run_ensemble_training(df: pd.DataFrame, experiment_name: str = "ensemble_run
         "sales_roll_std_16_7",
         "family_mean_sales",
         "store_type_mean_sales",
+        "promo_lag_1",
+        "promo_lag_7",
+        "promo_roll_mean_7",
     ]
     features = cat_cols + num_cols
 
@@ -128,7 +131,7 @@ def generate_kaggle_submission(
     test_df = test_df[test_df["id"] != -1].copy()
 
     # Ensure categories match our training setup
-    cat_cols = ["family", "city", "state", "type", "cluster"]
+    cat_cols = ["family", "city", "state", "type", "cluster", "store_family"]
     for col in cat_cols:
         test_df[col] = test_df[col].astype("category")
 
