@@ -3,3 +3,4 @@ Run: lgb_xgb_ensemble_blend | LGB: 0.3967 | XGB: 0.3913 | Ensemble Blend: 0.3928
 Run: lgb_xgb_ensemble_blend | LGB: 0.4535 | XGB: 0.4295 | Ensemble Blend: 0.4388
 Run: lgb_xgb_ensemble_blend | LGB: 0.4350 | XGB: 0.4241 | Ensemble Blend: 0.4274
 Run: shortcut_plus_promo_lags | LGB: 0.4207 | XGB: 0.4217 | Ensemble Blend: 0.4190
+Run: type_product_family_mean | LGB: 0.4194 | XGB: 0.4208 | Ensemble Blend: 0.4176

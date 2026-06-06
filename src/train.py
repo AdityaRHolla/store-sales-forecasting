@@ -38,6 +38,7 @@ def run_ensemble_training(df: pd.DataFrame, experiment_name: str = "ensemble_run
         "promo_lag_1",
         "promo_lag_7",
         "promo_roll_mean_7",
+        "type_family_mean_sales",
     ]
     features = cat_cols + num_cols
 

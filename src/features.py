@@ -101,7 +101,17 @@ def build_lag_features(df: pd.DataFrame) -> pd.DataFrame:
         .astype(np.float32)
     )
 
-    # Clean up empty spaces at the beginning of the timeline
+    # --- NEW: Grouped Category Target Encoding ---
+    print("🏢 Engineering Store-Type + Product Family target scales...")
+
+    # Group by both store type and product family to isolate structural shopping baselines
+    df["type_family_mean_sales"] = (
+        df.groupby(["type", "family"])["sales"]
+        .transform(lambda x: x.shift(16).rolling(30, min_periods=1).mean())
+        .fillna(0.0)
+        .astype(np.float32)
+    )
+    # ----------------------------------------------
     fill_cols = [
         "sales_lag_16",
         "sales_lag_21",
@@ -110,6 +120,7 @@ def build_lag_features(df: pd.DataFrame) -> pd.DataFrame:
         "sales_roll_std_16_7",
         "family_mean_sales",
         "store_type_mean_sales",
+        "type_family_mean_sales",
     ]
     df[fill_cols] = df[fill_cols].fillna(0.0)
 
