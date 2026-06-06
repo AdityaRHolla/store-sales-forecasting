@@ -1,13 +1,17 @@
+import os
 import lightgbm as lgb
-import mlflow
 import numpy as np
 import pandas as pd
+import xgboost as xgb
 from sklearn.metrics import root_mean_squared_error
 from src import config
 
 
-def run_baseline_training(df: pd.DataFrame, experiment_name: str = "lgb_baseline"):
-    """Splits data, trains LightGBM, and saves all metrics automatically to MLflow."""
+def run_ensemble_training(df: pd.DataFrame, experiment_name: str = "ensemble_run"):
+    """Trains both LightGBM and XGBoost models, averages their predictions,
+
+    and logs the blended score to the local ledger file.
+    """
     print("✂️ Splitting data into Train and Validation sets...")
 
     cat_cols = ["family", "city", "state", "type", "cluster"]
@@ -28,9 +32,13 @@ def run_baseline_training(df: pd.DataFrame, experiment_name: str = "lgb_baseline
         "sales_lag_7",
         "sales_lag_14",
         "sales_roll_mean_7",
+        "sales_roll_std_7",
+        "family_mean_sales",
+        "store_type_mean_sales",
     ]
     features = cat_cols + num_cols
 
+    # Prepare category types cleanly for both tree backends
     for col in cat_cols:
         df[col] = df[col].astype("category")
 
@@ -50,32 +58,56 @@ def run_baseline_training(df: pd.DataFrame, experiment_name: str = "lgb_baseline
     y_train_log = np.log1p(y_train)
     y_val_log = np.log1p(y_val)
 
-    # --- NEW: Initialize MLflow Experiment Dashboard ---
-    mlflow.set_experiment("Favorita_Store_Sales")
+    # 1. Train LightGBM
+    print("🚀 Training LightGBM model component...")
+    lgb_model = lgb.LGBMRegressor(
+        n_estimators=150, learning_rate=0.08, random_state=42, n_jobs=-1
+    )
+    lgb_model.fit(
+        X_train,
+        y_train_log,
+        eval_set=[(X_val, y_val_log)],
+        callbacks=[lgb.early_stopping(stopping_rounds=15, verbose=False)],
+    )
+    lgb_preds = lgb_model.predict(X_val)
 
-    with mlflow.start_run(run_name=experiment_name):
-        print(f"📊 Tracking execution under run: '{experiment_name}'")
-        print("🚀 Training LightGBM model...")
+    # 2. Train XGBoost (Using experimental high-performance category handling)
+    print("🚀 Training XGBoost model component...")
+    xgb_model = xgb.XGBRegressor(
+        n_estimators=150,
+        learning_rate=0.08,
+        random_state=42,
+        n_jobs=-1,
+        enable_categorical=True,  # Tells XGBoost to read category columns natively
+        early_stopping_rounds=15,
+    )
+    xgb_model.fit(
+        X_train,
+        y_train_log,
+        eval_set=[(X_val, y_val_log)],
+        verbose=False,
+    )
+    xgb_preds = xgb_model.predict(X_val)
 
-        model = lgb.LGBMRegressor(
-            n_estimators=100, learning_rate=0.1, random_state=42, n_jobs=-1
+    # 3. Blended Ensemble (Simple 50/50 average in log space)
+    print("⚖️ Blending model predictions into unified ensemble...")
+    ensemble_preds = (lgb_preds * 0.5) + (xgb_preds * 0.5)
+
+    # Calculate metrics
+    lgb_rmsle = root_mean_squared_error(y_val_log, lgb_preds)
+    xgb_rmsle = root_mean_squared_error(y_val_log, xgb_preds)
+    ensemble_rmsle = root_mean_squared_error(y_val_log, ensemble_preds)
+
+    print(f"\n💡 LightGBM Component RMSLE: {lgb_rmsle:.4f}")
+    print(f"💡 XGBoost Component RMSLE: {xgb_rmsle:.4f}")
+    print(f"🎉 Final Blended Ensemble RMSLE Score: {ensemble_rmsle:.4f}")
+
+    # --- Write Results to Local Ledger ---
+    ledger_path = os.path.join(config.BASE_DIR, "metrics_ledger.txt")
+    with open(ledger_path, "a") as f:
+        f.write(
+            f"Run: {experiment_name} | LGB: {lgb_rmsle:.4f} | XGB: {xgb_rmsle:.4f} | Ensemble Blend: {ensemble_rmsle:.4f}\n"
         )
+    print(f"✓ Ensemble scores saved securely to ledger: {ledger_path}")
 
-        model.fit(
-            X_train,
-            y_train_log,
-            eval_set=[(X_val, y_val_log)],
-            callbacks=[lgb.early_stopping(stopping_rounds=10, verbose=False)],
-        )
-
-        preds_log = model.predict(X_val)
-        rmsle = root_mean_squared_error(y_val_log, preds_log)
-
-        # Log parameters and metrics explicitly into our dashboard backend
-        mlflow.log_param("num_features", len(features))
-        mlflow.log_param("model_type", "LightGBM")
-        mlflow.log_metric("val_rmsle", rmsle)
-
-        print(f"\n🎉 Validation RMSLE Score: {rmsle:.4f}")
-
-    return model, features
+    return lgb_model, xgb_model, features
