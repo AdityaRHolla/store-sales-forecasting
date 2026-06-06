@@ -1,0 +1,3 @@
+Run: category_scale_tuning | Total Features: 24 | Validation RMSLE: 0.3967
+Run: lgb_xgb_ensemble_blend | LGB: 0.3967 | XGB: 0.3913 | Ensemble Blend: 0.3928
+Run: lgb_xgb_ensemble_blend | LGB: 0.4535 | XGB: 0.4295 | Ensemble Blend: 0.4388

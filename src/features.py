@@ -54,45 +54,43 @@ def build_macro_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_lag_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Creates advanced time-series lags and rolling averages grouped by category
+    """Creates leak-free historical lag features using a strict 16-day safety gap."""
+    print("⏳ Engineering leak-free historical lags (16+ days out)...")
 
-    and store attributes.
-    """
-    print("⏳ Engineering advanced group lag features...")
-
-    # Always ensure chronological sort order
+    # Ensure chronological sort order
     df = df.sort_values(["store_nbr", "family", "date"]).reset_index(drop=True)
 
-    # Core Store-Family grouping configuration
+    # Store-Family grouping configuration
     sf_group = df.groupby(["store_nbr", "family"])["sales"]
 
-    # 1. Base individual lags
-    df["sales_lag_1"] = sf_group.shift(1).astype(np.float32)
-    df["sales_lag_7"] = sf_group.shift(7).astype(np.float32)
-    df["sales_lag_14"] = sf_group.shift(14).astype(np.float32)
+    # 1. Safe Individual Lags (Starts at 16 to match the length of the test window)
+    df["sales_lag_16"] = sf_group.shift(16).astype(np.float32)
+    df["sales_lag_21"] = sf_group.shift(21).astype(np.float32)
+    df["sales_lag_28"] = sf_group.shift(28).astype(np.float32)
 
-    # 2. Moving averages to smooth out high-volume volatility
-    df["sales_roll_mean_7"] = (
-        sf_group.shift(1)
+    # 2. Safe Moving Averages
+    # We shift by 16 first, then calculate a 7-day rolling window
+    df["sales_roll_mean_16_7"] = (
+        sf_group.shift(16)
         .transform(lambda x: x.rolling(7, min_periods=1).mean())
         .astype(np.float32)
     )
-    df["sales_roll_std_7"] = (
-        sf_group.shift(1)
+
+    df["sales_roll_std_16_7"] = (
+        sf_group.shift(16)
         .transform(lambda x: x.rolling(7, min_periods=1).std())
         .fillna(0.0)
         .astype(np.float32)
     )
 
-    # 3. Macro target statistics for High-Volume stores and families
-    # Calculates the average sales ranking for each store type and product family combo
-    print("🏢 Engineering store-type and product family target scales...")
+    # 3. Target Scales (Already safe since they use shift(16))
     df["family_mean_sales"] = (
         df.groupby("family")["sales"]
         .transform(lambda x: x.shift(16).rolling(30, min_periods=1).mean())
         .fillna(0.0)
         .astype(np.float32)
     )
+
     df["store_type_mean_sales"] = (
         df.groupby("type")["sales"]
         .transform(lambda x: x.shift(16).rolling(30, min_periods=1).mean())
@@ -102,15 +100,15 @@ def build_lag_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Clean up empty spaces at the beginning of the timeline
     fill_cols = [
-        "sales_lag_1",
-        "sales_lag_7",
-        "sales_lag_14",
-        "sales_roll_mean_7",
-        "sales_roll_std_7",
+        "sales_lag_16",
+        "sales_lag_21",
+        "sales_lag_28",
+        "sales_roll_mean_16_7",
+        "sales_roll_std_16_7",
         "family_mean_sales",
         "store_type_mean_sales",
     ]
     df[fill_cols] = df[fill_cols].fillna(0.0)
 
-    print("✓ Advanced scale features generated cleanly.")
+    print("✓ Leak-free features generated cleanly.")
     return df
