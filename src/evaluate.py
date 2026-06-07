@@ -2,13 +2,13 @@ import pandas as pd
 import numpy as np
 
 
-def run_error_analysis(
-    df: pd.DataFrame, family_models: dict, features: list
+def run_adaptive_error_analysis(
+    df: pd.DataFrame, family_models: dict, family_scale_types: dict, features: list
 ) -> pd.DataFrame:
-    """Isolates validation predictions across all 33 family models for custom error insights."""
-    print("🔎 Extracting validation slices for multi-model error analysis...")
+    """Isolates validation predictions across mixed-scale family models for precise error profiling."""
+    print("🔎 Extracting validation slices for adaptive-scale error analysis...")
 
-    # Isolate validation set exactly like our training loop
+    # Isolate validation set exactly like our training loop (final 16 days of training data)
     val_cutoff = pd.to_datetime("2017-07-26")
     val_df = df[df["date"] >= val_cutoff].copy()
 
@@ -17,7 +17,7 @@ def run_error_analysis(
     for col in cat_cols:
         val_df[col] = val_df[col].astype("category")
 
-    # Create blank placeholder column for loop predictions
+    # Create blank placeholder column for loop predictions in raw units
     val_df["predicted_sales"] = 0.0
 
     # Loop through each family and collect its validation predictions
@@ -26,10 +26,18 @@ def run_error_analysis(
 
         if fam_mask.sum() > 0:
             X_val_fam = val_df.loc[fam_mask, features]
-            preds_log = model.predict(X_val_fam)
+            preds_trans = model.predict(X_val_fam)
 
-            # Invert from log-space back to raw units
-            final_preds = np.expm1(preds_log)
+            # Look up the specific scale type used during the training loop for this family
+            scale_type = family_scale_types[family]
+
+            # Invert predictions back to raw units
+            if scale_type == "sqrt":
+                final_preds = np.square(preds_trans)
+            else:
+                final_preds = np.expm1(preds_trans)
+
+            # Assign raw predictions back to the matching family rows
             val_df.loc[fam_mask, "predicted_sales"] = np.clip(final_preds, 0, None)
 
     # Calculate the raw absolute difference error per row

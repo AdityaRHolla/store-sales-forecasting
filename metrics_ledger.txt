@@ -10,3 +10,5 @@ Run: holiday_proximity_and_promo_ratio | LGB: 0.4242 | XGB: 0.4127 | Ensemble Bl
 Run: fixed_holiday_maps_and_categorical_clusters | LGB: 0.4253 | XGB: 0.4131 | Ensemble Blend: 0.4158
 Run: isolated_per_family_loop | Per-Family Loop | Validation RMSLE: 0.4024
 Run: beverage_velocity_interactions | Per-Family Loop | Validation RMSLE: 0.4023
+Run: strict_weekly_matching_lags | Per-Family Loop | Validation RMSLE: 0.4051
+Run: adaptive_per_family_scaling | Adaptive Scaling Loop | Validation RMSLE: 0.4042

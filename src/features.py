@@ -63,86 +63,73 @@ def build_macro_features(df: pd.DataFrame) -> pd.DataFrame:
     df["oil_roll_mean_7"] = df["oil_roll_mean_7"].astype(np.float32)
     df["oil_daily_diff"] = df["oil_daily_diff"].astype(np.float32)
 
-    # --- NEW: Cross-Feature Volatility Interaction ---
-    print("🍹 Engineering promo-to-sales velocity interactions...")
-    # Tells the model if promotions are outstripping historical sales trends
-    df["promo_vs_sales_trend"] = (
-        df["promo_roll_mean_7"] - df["sales_roll_mean_16_7"]
-    ).astype(np.float32)
-    # --------------------------------------------------
-
     return df
 
 
 def build_lag_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Creates leak-free historical lag features using a strict 16-day safety gap."""
-    print("⏳ Engineering leak-free historical lags (16+ days out)...")
+    """Creates leak-free weekly matching lag horizons (21 and 28 days out).
 
-    # Ensure chronological sort order
+    Completely removes the 16-day false signal to preserve day-of-week rhythms.
+    """
+    print("⏳ Engineering strict week-matching historical lags (21 and 28 days out)...")
+
+    # Always ensure chronological sort order
     df = df.sort_values(["store_nbr", "family", "date"]).reset_index(drop=True)
 
     # Store-Family grouping configuration
     sf_group = df.groupby(["store_nbr", "family"])["sales"]
 
-    # 1. Safe Individual Lags (Starts at 16 to match the length of the test window)
-    df["sales_lag_16"] = sf_group.shift(16).astype(np.float32)
+    # 1. Strict Weekly Lags (Sunday maps to Sunday, Wednesday to Wednesday)
     df["sales_lag_21"] = sf_group.shift(21).astype(np.float32)
     df["sales_lag_28"] = sf_group.shift(28).astype(np.float32)
 
-    # 2. Safe Moving Averages
-    # We shift by 16 first, then calculate a 7-day rolling window
-    df["sales_roll_mean_16_7"] = (
-        sf_group.shift(16)
+    # 2. Weekly Moving Averages
+    # Shift by 21 first, then compute a clean 7-day rolling window
+    df["sales_roll_mean_21_7"] = (
+        sf_group.shift(21)
         .transform(lambda x: x.rolling(7, min_periods=1).mean())
         .astype(np.float32)
     )
-
-    df["sales_roll_std_16_7"] = (
-        sf_group.shift(16)
+    df["sales_roll_std_21_7"] = (
+        sf_group.shift(21)
         .transform(lambda x: x.rolling(7, min_periods=1).std())
         .fillna(0.0)
         .astype(np.float32)
     )
 
-    # 3. Target Scales (Already safe since they use shift(16))
+    # 3. Grouped Target Scales (Shifted to 21 to remain leak-free)
     df["family_mean_sales"] = (
         df.groupby("family")["sales"]
-        .transform(lambda x: x.shift(16).rolling(30, min_periods=1).mean())
+        .transform(lambda x: x.shift(21).rolling(30, min_periods=1).mean())
         .fillna(0.0)
         .astype(np.float32)
     )
-
     df["store_type_mean_sales"] = (
         df.groupby("type")["sales"]
-        .transform(lambda x: x.shift(16).rolling(30, min_periods=1).mean())
+        .transform(lambda x: x.shift(21).rolling(30, min_periods=1).mean())
         .fillna(0.0)
         .astype(np.float32)
     )
-
-    # --- NEW: Grouped Category Target Encoding ---
-    print("🏢 Engineering Store-Type + Product Family target scales...")
-
-    # Group by both store type and product family to isolate structural shopping baselines
     df["type_family_mean_sales"] = (
         df.groupby(["type", "family"])["sales"]
-        .transform(lambda x: x.shift(16).rolling(30, min_periods=1).mean())
+        .transform(lambda x: x.shift(21).rolling(30, min_periods=1).mean())
         .fillna(0.0)
         .astype(np.float32)
     )
-    # ----------------------------------------------
+
+    # Clean up empty spaces at the beginning of the timeline
     fill_cols = [
-        "sales_lag_16",
         "sales_lag_21",
         "sales_lag_28",
-        "sales_roll_mean_16_7",
-        "sales_roll_std_16_7",
+        "sales_roll_mean_21_7",
+        "sales_roll_std_21_7",
         "family_mean_sales",
         "store_type_mean_sales",
         "type_family_mean_sales",
     ]
     df[fill_cols] = df[fill_cols].fillna(0.0)
 
-    print("✓ Leak-free features generated cleanly.")
+    print("✓ Strict day-of-week matching features generated cleanly.")
     return df
 
 

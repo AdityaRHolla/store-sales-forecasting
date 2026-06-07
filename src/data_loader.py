@@ -145,28 +145,32 @@ def prepare_test_inference_data(train_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def merge_holiday_data(df: pd.DataFrame) -> pd.DataFrame:
-    """Merges national holiday metadata and marks true calendar events."""
-    print("⏳ Ingesting and processing holiday events...")
+    """Correctly parses transferred, bridge, and true national holidays."""
+    print("⏳ Ingesting and processing true holiday events...")
     holidays = pd.read_csv(config.HOLIDAYS_PATH, parse_dates=["date"])
 
-    # Filter for true National holidays to keep the signal clean
-    # Ignore local city holidays since they don't impact all stores globally
-    national_holidays = holidays[holidays["locale"] == "National"].copy()
+    # 1. Isolate national scale events
+    nat = holidays[holidays["locale"] == "National"].copy()
 
-    # Drop rows marked as "Transferred" because the actual holiday day moved
-    national_holidays = national_holidays[national_holidays["transferred"] == False]
+    # 2. Capture regular holidays that WERE NOT moved
+    normal_holidays = nat[(nat["type"] == "Holiday") & (nat["transferred"] == False)]
 
-    # Create a simple binary indicator flag: Is this a national holiday?
-    national_holidays["is_national_holiday"] = 1
+    # 3. Capture the actual target days where transferred holidays were celebrated
+    # Plus custom bridge days added by the government
+    celebrated_transfers = nat[nat["type"].isin(["Transfer", "Bridge", "Additional"])]
 
-    # Remove duplicate dates if multiple holiday descriptions land on the same day
-    national_holidays = national_holidays.drop_duplicates(subset=["date"])
+    # Combine them into a single definitive list of non-working calendar events
+    true_holidays = pd.concat([normal_holidays, celebrated_transfers], axis=0)
+    true_holidays["is_national_holiday"] = 1
 
-    # Merge this flag back into our unified main dataframe
+    # Drop duplicates to keep the grid clean
+    true_holidays = true_holidays.drop_duplicates(subset=["date"])
+
+    # Merge back into our main pipeline
     df = pd.merge(
-        df, national_holidays[["date", "is_national_holiday"]], on="date", how="left"
+        df, true_holidays[["date", "is_national_holiday"]], on="date", how="left"
     )
     df["is_national_holiday"] = df["is_national_holiday"].fillna(0).astype(np.int8)
 
-    print("✓ National holiday signals integrated cleanly.")
+    print("✓ Definitive holiday tracking integrated.")
     return df

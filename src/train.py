@@ -6,14 +6,12 @@ from sklearn.metrics import root_mean_squared_error
 from src import config
 
 
-def run_per_family_training(df: pd.DataFrame, experiment_name: str = "per_family"):
-    """Trains a completely independent LightGBM model for each product family
-
-    to handle scale variances cleanly.
-    """
+def run_adaptive_scale_training(
+    df: pd.DataFrame, experiment_name: str = "adaptive_scaling"
+):
+    """Trains independent models with specialized target scaling per family to beat the log bottleneck."""
     print("✂️ Preparing Train and Validation horizons...")
 
-    # Define features (Drop 'family' from cat_cols since we split the data by family now)
     cat_cols = ["city", "state", "type", "cluster", "store_family"]
     num_cols = [
         "onpromotion",
@@ -28,16 +26,12 @@ def run_per_family_training(df: pd.DataFrame, experiment_name: str = "per_family
         "is_payday",
         "is_nye",
         "is_nyd",
-        "sales_lag_16",
         "sales_lag_21",
         "sales_lag_28",
-        "sales_roll_mean_16_7",
-        "sales_roll_std_16_7",
+        "sales_roll_mean_21_7",
+        "sales_roll_std_21_7",
         "family_mean_sales",
         "store_type_mean_sales",
-        "promo_lag_1",
-        "promo_lag_7",
-        "promo_roll_mean_7",
         "type_family_mean_sales",
         "day_of_week_sin",
         "day_of_week_cos",
@@ -47,7 +41,6 @@ def run_per_family_training(df: pd.DataFrame, experiment_name: str = "per_family
         "holiday_lead_1",
         "holiday_lag_1",
         "promo_intensity_ratio",
-        "promo_vs_sales_trend",
     ]
     features = cat_cols + num_cols
 
@@ -55,27 +48,24 @@ def run_per_family_training(df: pd.DataFrame, experiment_name: str = "per_family
         df[col] = df[col].astype("category")
 
     val_cutoff = pd.to_datetime("2017-07-26")
-    # train_mask = df["date"] < val_cutoff
     val_mask = df["date"] >= val_cutoff
 
-    # Dictionaries to store our independent models
     family_models = {}
+    family_scale_types = {}  # Tracks which transformation each family used
 
-    # Create empty arrays to collect our validation predictions
-    all_val_preds_log = np.zeros(df[val_mask].shape[0])
-    all_val_targets_log = np.zeros(df[val_mask].shape[0])
+    # Arrays to collect our final global predictions in true raw units
+    val_row_count = df[val_mask].shape[0]
+    all_val_preds_raw = np.zeros(val_row_count)
+    all_val_targets_raw = np.zeros(val_row_count)
 
-    # Extract all unique product families
     unique_families = df["family"].unique()
     print(
-        f"🚀 Commencing isolated loop training across {len(unique_families)} product families..."
+        f"🚀 Commencing adaptive scale loop training across {len(unique_families)} families..."
     )
 
-    # Track row positions across the validation array chunks
     current_idx = 0
 
     for family in unique_families:
-        # Isolate the data rows for just this specific family
         fam_df = df[df["family"] == family]
 
         X_train = fam_df.loc[fam_df["date"] < val_cutoff, features]
@@ -84,103 +74,107 @@ def run_per_family_training(df: pd.DataFrame, experiment_name: str = "per_family
         X_val = fam_df.loc[fam_df["date"] >= val_cutoff, features]
         y_val = fam_df.loc[fam_df["date"] >= val_cutoff, config.TARGET_COL]
 
-        # Log transform
-        y_train_log = np.log1p(y_train)
-        y_val_log = np.log1p(y_val)
+        # --- ADAPTIVE TARGET SCALING LOGIC ---
+        # If the category peaks over 5,000 units, use Square Root to protect high-end variance
+        if y_train.max() > 5000:
+            scale_type = "sqrt"
+            y_train_trans = np.sqrt(y_train)
+            y_val_trans = np.sqrt(y_val)
+        else:
+            scale_type = "log1p"
+            y_train_trans = np.log1p(y_train)
+            y_val_trans = np.log1p(y_val)
 
-        # Train a dedicated model for this family
+        family_scale_types[family] = scale_type
+        # --------------------------------------
+
         model = lgb.LGBMRegressor(
-            n_estimators=120,
-            learning_rate=0.08,
-            random_state=42,
-            n_jobs=-1,
-            verbose=-1,  # Keep the console output clean during the loop
+            n_estimators=120, learning_rate=0.08, random_state=42, n_jobs=-1, verbose=-1
         )
-
         model.fit(
             X_train,
-            y_train_log,
-            eval_set=[(X_val, y_val_log)],
+            y_train_trans,
+            eval_set=[(X_val, y_val_trans)],
             callbacks=[lgb.early_stopping(stopping_rounds=10, verbose=False)],
         )
 
-        # Generate predictions for this family
-        preds_log = model.predict(X_val)
+        preds_trans = model.predict(X_val)
 
-        # Save model to our dictionary
+        # Invert predictions back to raw sales units based on the scale used
+        if scale_type == "sqrt":
+            preds_raw = np.square(preds_trans)
+        else:
+            preds_raw = np.expm1(preds_trans)
+
+        preds_raw = np.clip(preds_raw, 0, None)
+
+        # Save to master raw arrays
+        num_rows = len(preds_raw)
+        all_val_preds_raw[current_idx : current_idx + num_rows] = preds_raw
+        all_val_targets_raw[current_idx : current_idx + num_rows] = y_val.values
+
         family_models[family] = model
-
-        # Append predictions to our master validation arrays
-        num_rows = len(preds_log)
-        all_val_preds_log[current_idx : current_idx + num_rows] = preds_log
-        all_val_targets_log[current_idx : current_idx + num_rows] = y_val_log.values
         current_idx += num_rows
 
-    # Calculate global validation score across all families combined
-    global_rmsle = root_mean_squared_error(all_val_targets_log, all_val_preds_log)
-    print(f"\n🎉 Isolated Loop Validation RMSLE Score: {global_rmsle:.4f}")
+    # Calculate global competitive score in log space (RMSLE) for honest tracking
+    global_rmsle = root_mean_squared_error(
+        np.log1p(all_val_targets_raw), np.log1p(all_val_preds_raw)
+    )
+    print(f"\n🎉 Adaptive Scale Validation RMSLE Score: {global_rmsle:.4f}")
 
-    # Save to our ledger file
     ledger_path = os.path.join(config.BASE_DIR, "metrics_ledger.txt")
     with open(ledger_path, "a") as f:
         f.write(
-            f"Run: {experiment_name} | Per-Family Loop | Validation RMSLE: {global_rmsle:.4f}\n"
+            f"Run: {experiment_name} | Adaptive Scaling Loop | Validation RMSLE: {global_rmsle:.4f}\n"
         )
 
-    return family_models, features
+    return family_models, family_scale_types, features
 
 
-def generate_per_family_submission(
-    df: pd.DataFrame, test_row_count: int, family_models, features
+def generate_adaptive_scale_submission(
+    df: pd.DataFrame, test_row_count: int, family_models, family_scale_types, features
 ):
-    """Generates a submission file by routing rows to their specialized family models."""
-    print("🔮 Running multi-model loop inference on future test grid...")
+    """Generates a submission file by handling mixed sqrt and log1p scale inversions per family."""
+    print("🔮 Running adaptive-scale inference loop on future test grid...")
 
-    # Isolate rows that belong strictly to the future test timeline
     test_mask = df["date"] >= pd.to_datetime("2017-08-16")
     test_df = df[test_mask].copy()
-
-    # Remove any injected holiday placeholder rows (IDs that we set to -1)
     test_df = test_df[test_df["id"] != -1].copy()
 
-    # Ensure categories match our training setup
     cat_cols = ["city", "state", "type", "cluster", "store_family"]
     for col in cat_cols:
         test_df[col] = test_df[col].astype("category")
 
-    # Create an empty array to collect final predictions
     test_df["sales"] = 0.0
 
-    # Loop through each product family and use its dedicated model to predict
     for family, model in family_models.items():
         fam_mask = test_df["family"] == family
 
         if fam_mask.sum() > 0:
             X_test_fam = test_df.loc[fam_mask, features]
+            preds_trans = model.predict(X_test_fam)
 
-            # Predict in log-space, then transform back to raw sales units
-            preds_log = model.predict(X_test_fam)
-            final_preds = np.expm1(preds_log)
-            final_preds = np.clip(final_preds, 0, None)
+            # Look up the specific scale type used for this product family
+            scale_type = family_scale_types[family]
 
-            # Assign predictions back to the matching family rows
-            test_df.loc[fam_mask, "sales"] = final_preds
+            if scale_type == "sqrt":
+                final_preds = np.square(preds_trans)
+            else:
+                final_preds = np.expm1(preds_trans)
 
-    print("📋 Re-aligning loop predictions with raw Kaggle test format...")
-    # Load the original raw test file to use as our layout template
+            test_df.loc[fam_mask, "sales"] = np.clip(final_preds, 0, None)
+
+    print("📋 Re-aligning adaptive predictions with raw Kaggle test format...")
     raw_test = pd.read_csv(config.TEST_PATH)
-
-    # Merge our loop predictions onto the raw template using the unique ID column
     submission = pd.merge(
         raw_test[["id"]], test_df[["id", "sales"]], on="id", how="left"
     )
-
-    # Safety Check: Fill any missing rows with 0 if an ID skipped calculation
     submission["sales"] = submission["sales"].fillna(0.0)
 
-    # Verify formatting bounds before exporting
     print(f"📊 Submission Row Count: {len(submission)} | Expected: {len(raw_test)}")
 
     sub_path = os.path.join(config.BASE_DIR, "data", "processed", "submission.csv")
     submission.to_csv(sub_path, index=False)
-    print(f"🎉 Pristine multi-model submission file saved successfully to: {sub_path}")
+    print(
+        f"🎉 Pristine adaptive-scale submission file saved successfully to: {sub_path}"
+    )
