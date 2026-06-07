@@ -47,6 +47,7 @@ def run_per_family_training(df: pd.DataFrame, experiment_name: str = "per_family
         "holiday_lead_1",
         "holiday_lag_1",
         "promo_intensity_ratio",
+        "promo_vs_sales_trend",
     ]
     features = cat_cols + num_cols
 
@@ -54,7 +55,7 @@ def run_per_family_training(df: pd.DataFrame, experiment_name: str = "per_family
         df[col] = df[col].astype("category")
 
     val_cutoff = pd.to_datetime("2017-07-26")
-    train_mask = df["date"] < val_cutoff
+    # train_mask = df["date"] < val_cutoff
     val_mask = df["date"] >= val_cutoff
 
     # Dictionaries to store our independent models

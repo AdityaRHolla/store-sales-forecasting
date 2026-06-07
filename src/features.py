@@ -3,10 +3,10 @@ import numpy as np
 
 
 def build_time_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Extracts high-value calendar features from the date column based on EDA insights."""
-    print("🗓️ Engineering calendar and payday features...")
+    """Extracts calendar features and creates circular trigonometric time signals."""
+    print("🗓️ Engineering calendar features and cyclical time signals...")
 
-    # Combine store number and product family into a single explicit token
+    # The Store-Family Structural Shortcut
     df["store_family"] = df["store_nbr"].astype(str) + "_" + df["family"].astype(str)
 
     # Core calendar features
@@ -15,13 +15,23 @@ def build_time_features(df: pd.DataFrame) -> pd.DataFrame:
     df["day"] = df["date"].dt.day.astype(np.int8)
     df["day_of_week"] = df["date"].dt.dayofweek.astype(np.int8)
 
-    # Weekend Flag (Sat=5, Sun=6)
+    # --- NEW: Trigonometric Cyclical Time Waves ---
+    # Day of week loop (7 days)
+    df["day_of_week_sin"] = np.sin(2 * np.pi * df["day_of_week"] / 7.0).astype(
+        np.float32
+    )
+    df["day_of_week_cos"] = np.cos(2 * np.pi * df["day_of_week"] / 7.0).astype(
+        np.float32
+    )
+
+    # Month loop (12 months)
+    df["month_sin"] = np.sin(2 * np.pi * df["month"] / 12.0).astype(np.float32)
+    df["month_cos"] = np.cos(2 * np.pi * df["month"] / 12.0).astype(np.float32)
+    # -----------------------------------------------
+
+    # Weekend, Payday, and Holiday Flags
     df["is_weekend"] = df["day_of_week"].isin([5, 6]).astype(np.int8)
-
-    # Payday Flag (15th and Last day of the month)
     df["is_payday"] = ((df["day"] == 15) | (df["date"].dt.is_month_end)).astype(np.int8)
-
-    # New Year's Eve (Dec 31) and New Year's Day (Jan 1) flags
     df["is_nye"] = ((df["month"] == 12) & (df["day"] == 31)).astype(np.int8)
     df["is_nyd"] = ((df["month"] == 1) & (df["day"] == 1)).astype(np.int8)
 
@@ -52,6 +62,14 @@ def build_macro_features(df: pd.DataFrame) -> pd.DataFrame:
     # Optimize column sizes
     df["oil_roll_mean_7"] = df["oil_roll_mean_7"].astype(np.float32)
     df["oil_daily_diff"] = df["oil_daily_diff"].astype(np.float32)
+
+    # --- NEW: Cross-Feature Volatility Interaction ---
+    print("🍹 Engineering promo-to-sales velocity interactions...")
+    # Tells the model if promotions are outstripping historical sales trends
+    df["promo_vs_sales_trend"] = (
+        df["promo_roll_mean_7"] - df["sales_roll_mean_16_7"]
+    ).astype(np.float32)
+    # --------------------------------------------------
 
     return df
 
@@ -129,28 +147,37 @@ def build_lag_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_promotion_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Creates leak-free short-term lags and rolling windows for promotions.
-
-    Safe to use short horizons because future promotion tracks are fully known!
-    """
-    print("📢 Engineering short-term promotional memory windows...")
+    """Creates advanced promotional intensity metrics and holiday proximity windows."""
+    print(
+        "📢 Engineering short-term promotional memory and holiday proximity windows..."
+    )
 
     # Ensure chronological order
     df = df.sort_values(["store_nbr", "family", "date"]).reset_index(drop=True)
 
-    # Store-Family grouping configuration for promotional volumes
+    # 1. Holiday Proximity Lead/Lag Features (Global calendar shift)
+    # Allows the model to see the holiday coming 1 day in advance or trailing 1 day behind
+    df["holiday_lead_1"] = df["is_national_holiday"].shift(-1).fillna(0).astype(np.int8)
+    df["holiday_lag_1"] = df["is_national_holiday"].shift(1).fillna(0).astype(np.int8)
+
+    # 2. Store-Family grouping configuration for promotional volumes
     sf_promo_group = df.groupby(["store_nbr", "family"])["onpromotion"]
 
-    # 1. Short-term promotional history flags
+    # Short-term promotional history flags
     df["promo_lag_1"] = sf_promo_group.shift(1).fillna(0).astype(np.int16)
     df["promo_lag_7"] = sf_promo_group.shift(7).fillna(0).astype(np.int16)
 
-    # 2. Promotional rolling volume momentum
-    # Tells the model if promotions are ramping up or slowing down over the last week
+    # Promotional rolling volume momentum
     df["promo_roll_mean_7"] = (
         sf_promo_group.transform(lambda x: x.rolling(7, min_periods=1).mean())
         .fillna(0.0)
         .astype(np.float32)
     )
+
+    # --- NEW: Promotional Intensity Ratio ---
+    # Captures unusual discount spikes relative to local department history
+    df["promo_intensity_ratio"] = (
+        df["onpromotion"] / (df["promo_roll_mean_7"] + 1.0)
+    ).astype(np.float32)
 
     return df
